@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Mahjong Solitario Aleatorio</title>
+<style>
+body { background: #b1784f; font-family: sans-serif; }
+#panel {text-align:center; margin-top:30px;}
+button { margin:0 20px; padding:10px 30px; font-size:20px; border-radius:6px; }
+#score { font-size:22px; padding: 0 14px; color: #111 }
+#message { font-size:26px; color:#b00; font-weight:bold; padding:16px 0; display:none;}
+#board { position: relative; width: 930px; height: 540px; margin: 30px auto 0 auto; border-radius:18px;}
+.tile {
+    width: 84px; height: 116px; position: absolute;
+    background: #fff; border: 4px solid #cfb160; border-radius: 13px;
+    box-shadow: 4px 8px 14px #633;
+    font-size: 51px; text-align: center; line-height: 116px;
+    cursor: pointer; user-select: none; transition: border 0.2s, opacity 0.2s;
+    z-index: 2;
+}
+.tile.selected { border: 4px solid #e01b1b; }
+.tile.removed { opacity: 0.07; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="panel">
+  <button onclick="newGame()">Nueva Partida</button>
+  <button onclick="resetGame()">Reiniciar</button>
+  <span id="score">Puntuación: 0</span>
+</div>
+<div id="message"></div>
+<div id="board"></div>
+<script>
+const SYMBOLS = [
+  "🀄","🀅","🀆","🀇","🀈","🀉","🀊","🀋","🀌","🀍","🀎","🀏",
+  "🀐","🀑","🀒","🀓","🀔","🀕","🀖","🀗","🀘","🀙"
+];
+
+const COLS = 15, ROWS = 8, TILE_W = 84, TILE_H = 116, GAP_X = 4, GAP_Y = 6, OFFSET_X = 18, OFFSET_Y = 14;
+let layout = [];
+let selected = [];
+let shapeMask = [];
+let lastShapeMask = null;
+let lastSeed = 0;
+let score = 0;
+let gameOver = false;
+
+function genShapeMask(seedRand) {
+  let mask = [];
+  for (let r = 0; r < ROWS; r++) {
+    let row = [];
+    let bump = Math.floor(Math.abs(Math.sin((seedRand+r)*Math.PI/ROWS))*3);
+    let start = 1 + bump + Math.floor(Math.random()*2);
+    let end = COLS - 2 - bump - Math.floor(Math.random()*2);
+    for (let c = 0; c < COLS; c++) {
+      row.push( (c >= start && c <= end && Math.random() > 0.10 + bump*0.07) ? 1 : 0 );
+    }
+    mask.push(row);
+  }
+  for (let y = 2; y < ROWS-2; y++) for (let x = 2; x < COLS-2; x++)
+    if (mask[y][x] && !mask[y-1][x] && !mask[y+1][x] && !mask[y][x-1] && !mask[y][x+1])
+      mask[y][x] = 0;
+  let count = mask.flat().filter(v=>v).length;
+  if (count%2!==0) {
+    for (let y = ROWS-1; y >=0; y--) for (let x=0; x<COLS; x++)
+      if(mask[y][x]){ mask[y][x]=0; count--; if(count%2===0)return mask; }
+  }
+  return mask;
+}
+
+function newGame(randomSeed = Date.now()) {
+  score = 0;
+  document.getElementById('score').textContent = "Puntuación: 0";
+  selected = [];
+  gameOver = false;
+  document.getElementById('message').style.display = 'none';
+  let tries = 0;
+  while(true) {
+      let mask = genShapeMask(randomSeed + tries);
+      let count = mask.flat().filter(v=>v).length;
+      if(count>=30 && count<=80) { shapeMask = mask; lastShapeMask = mask; lastSeed = randomSeed + tries; break; }
+      tries++;
+      if (tries > 20) break;
+  }
+  createLayout(shapeMask);
+}
+
+function resetGame() {
+  score = 0;
+  document.getElementById('score').textContent = "Puntuación: 0";
+  selected = [];
+  gameOver = false;
+  document.getElementById('message').style.display = 'none';
+  createLayout(lastShapeMask);
+}
+
+function createLayout(mask) {
+  layout = [];
+  let positions = [];
+  for (let y = 0; y < ROWS; y++)
+    for (let x = 0; x < COLS; x++)
+      if (mask[y][x]) positions.push({x, y});
+  let symbols = [];
+  for (let i = 0; i < positions.length/2 ; i++) {
+    let s = SYMBOLS[i%SYMBOLS.length];
+    symbols.push(s, s);
+  }
+  symbols = symbols.sort(()=>Math.random()-0.5);
+
+  document.getElementById('board').innerHTML = "";
+  positions.forEach((pos, i) => {
+    let t = {x: pos.x, y: pos.y, id: i, symbol: symbols[i], removed: false, div: null};
+    layout.push(t);
+  });
+  layout.forEach(tile => {
+    let d = document.createElement('div');
+    d.className = 'tile';
+    d.textContent = tile.symbol;
+    d.style.left = (OFFSET_X+tile.x*(TILE_W+GAP_X))+"px";
+    d.style.top = (OFFSET_Y+tile.y*(TILE_H+GAP_Y))+"px";
+    d.onclick = ()=>selectTile(tile.id);
+    tile.div = d;
+    document.getElementById('board').appendChild(d);
+  });
+}
+
+// Regla: ficha libre si tiene al menos un lado sin ficha ocupada
+function isTileFree(tile) {
+  if(tile.removed) return false;
+  let left = layout.find(t=>!t.removed && t.x === tile.x-1 && t.y === tile.y);
+  let right = layout.find(t=>!t.removed && t.x === tile.x+1 && t.y === tile.y);
+  return !(left && right);
+}
+
+// Detecta posibilidades de movimiento
+function checkPossibleMoves() {
+  let freeTiles = layout.filter(t=>!t.removed && isTileFree(t));
+  for(let i=0; i<freeTiles.length; i++)
+    for(let j=i+1; j<freeTiles.length; j++)
+      if(freeTiles[i].symbol === freeTiles[j].symbol)
+        return true;
+  return false;
+}
+
+function showEndMessage(text){
+  let el = document.getElementById('message');
+  el.textContent = text;
+  el.style.display = 'block';
+}
+
+function selectTile(idx) {
+  if(gameOver) return;
+  let tile = layout[idx];
+  if(tile.removed) return;
+  if(!isTileFree(tile)) return;
+  if(selected.length===1 && selected[0].id===tile.id) return;
+  tile.div.classList.add('selected');
+  selected.push(tile);
+  if(selected.length === 2) {
+    if(selected[0].symbol === selected[1].symbol) {
+      // Marcar eliminadas antes de comprobar juego terminado
+      setTimeout(()=>{
+        selected.forEach(t=>{
+          t.removed = true;
+          t.div.classList.add('removed');
+          t.div.classList.remove('selected');
+        });
+        selected = [];
+        score++;
+        document.getElementById('score').textContent = "Puntuación: "+score;
+        // Chequea estado del juego después de eliminar
+        setTimeout(() => {
+          if (layout.every(t=>t.removed)) {
+            gameOver = true;
+            showEndMessage("¡Felicidades! ¡Juego completado!");
+          } else if (!checkPossibleMoves()) {
+            gameOver = true;
+            showEndMessage("No hay más movimientos posibles. Juego terminado.");
+          }
+        }, 320);
+      }, 300);
+    } else {
+      setTimeout(()=>{
+        selected.forEach(t=>t.div.classList.remove('selected'));
+        selected=[];
+      }, 420);
+    }
+  }
+}
+
+newGame();
+</script>
+</body>
+</html>
